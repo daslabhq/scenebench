@@ -1,0 +1,62 @@
+{
+  "name": "scenebench",
+  "version": "0.0.1",
+  "description": "Open harness for running, measuring, and visualizing agent benchmarks. Adapters for AutomationBench, τ-bench, LeRobot, WorkArena.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".":             "./src/index.ts",
+    "./evaluators":  "./src/evaluators/index.ts",
+    "./reporters":   "./src/reporters/index.ts",
+    "./types":       "./types/index.ts",
+    "./types/*":     "./types/*.ts"
+  },
+  "files": [
+    "src",
+    "types",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "bun test src/"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "llm",
+    "benchmark",
+    "automationbench",
+    "tau-bench",
+    "lerobot",
+    "swe-bench",
+    "workarena",
+    "eval",
+    "opentelemetry",
+    "scene-otel",
+    "scenecast"
+  ],
+  "peerDependencies": {
+    "scene-otel": "*",
+    "scenecast": "*",
+    "scenegrad": "*"
+  },
+  "peerDependenciesMeta": {
+    "scene-otel": { "optional": true },
+    "scenecast": { "optional": true },
+    "scenegrad": { "optional": true }
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@opentelemetry/api": "^1.9.0",
+    "@opentelemetry/context-async-hooks": "^1.30.0",
+    "@opentelemetry/sdk-trace-base": "^1.30.0",
+    "@types/bun": "latest",
+    "scene-otel": "file:../scene-otel",
+    "scenecast": "file:../scenecast",
+    "scenegrad": "file:../scenegrad",
+    "typescript": "^5.6.0"
+  }
+}
