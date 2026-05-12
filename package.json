@@ -41,12 +41,14 @@
   "peerDependencies": {
     "scene-otel": "*",
     "scenecast": "*",
-    "scenegrad": "*"
+    "scenegrad": "*",
+    "autocheck":      "*"
   },
   "peerDependenciesMeta": {
     "scene-otel": { "optional": true },
-    "scenecast": { "optional": true },
-    "scenegrad": { "optional": true }
+    "scenecast":  { "optional": true },
+    "scenegrad":  { "optional": true },
+    "autocheck":       { "optional": true }
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -55,8 +57,9 @@
     "@opentelemetry/sdk-trace-base": "^1.30.0",
     "@types/bun": "latest",
     "scene-otel": "file:../scene-otel",
-    "scenecast": "file:../scenecast",
-    "scenegrad": "file:../scenegrad",
+    "scenecast":  "file:../scenecast",
+    "scenegrad":  "file:../scenegrad",
+    "autocheck":       "file:../autocheck",
     "typescript": "^5.6.0"
   }
 }

